@@ -3,83 +3,71 @@
 #include "RTClib.h"
 #include <Time.h>
 
-
-
-#define TIME_MSG_LEN  11   // time sync to PC is HEADER followed by Unix time_t as ten ASCII digits
-#define TIME_HEADER  'T'   // Header tag for serial time sync message
-#define TIME_REQUEST  7    // ASCII bell character requests a time sync message 
-
-
 RTC_DS1307 RTC;
+
 U8GLIB_SH1106_128X64 u8g(U8G_I2C_OPT_NONE);	// I2C / TWI 
 long last_millis = millis();
-
 String sync_message = "nothing";
+String inString = "";
 
 void setup(void) {
   Serial.begin(115200);   
   RTC.begin();
-   
-  // Check if the RTC is running.
-  if (! RTC.isrunning()) {
-    Serial.println("RTC is NOT running");
-  }
- 
-  // This section grabs the current datetime and compares it to 
-  // the compilation time.  If necessary, the RTC is updated.
-  DateTime now = RTC.now();
-  DateTime compiled = DateTime(__DATE__, __TIME__);
-  if (now.unixtime() < compiled.unixtime()) {
-    Serial.println("RTC is older than compile time! Updating");
-    RTC.adjust(DateTime(__DATE__, __TIME__));
-  }
-   
-  Serial.println("Setup complete.");
+  DateTime currTime = RTC.now();
+  printTime(currTime);
+
 }
 
 void loop(void) {
   last_millis = millis();
-  processSyncMessage(); 
+  if(Serial.available()) {
+    readSerial();
+  }
+
+  DateTime currTime = RTC.now();
+  printTime(currTime);
+  
   u8g.firstPage();  
   do {
-    drawString(time(RTC), 4, 20);
-    drawString(date(RTC), 4, 40);
-    drawString(sync_message, 4, 60);   
+    drawString(time_string(currTime), 20, 20);
+    drawString(date_string(currTime), 20, 40);
   } while( u8g.nextPage() );
 
   long diff = elapsed_time();
-  Serial.println(elapsed_time());
+  //Serial.println(elapsed_time());
   delay(1000 - diff);  
 }
 
-void processSyncMessage() {
-
-  while(Serial.available()) {
-    char c = Serial.read() ; 
-    Serial.print(c);  
+void readSerial() {
+  while (Serial.available() > 0) {
+    int inChar = Serial.read();
+    if (isDigit(inChar)) {
+      // convert the incoming byte to a char
+      // and add it to the string:
+      inString += (char)inChar;
+    }
+    if (inChar == '\n') {
+      char charBuf[20];
+      memset(charBuf, 0, 20);
+      inString.toCharArray(charBuf, 20);
+      inString = "";
+      long Long_Integer = atol(charBuf);
+      Serial.println(inString);
+      Long_Integer = Long_Integer - 14400;
+      Serial.println(Long_Integer);
+      DateTime FigureDate = DateTime(Long_Integer);
+      RTC.adjust(FigureDate);
+      printTime(FigureDate);
+    }
   }
+}
 
-  
-    // if time sync available from serial port, update time and return true
-  while(Serial.available() >=  TIME_MSG_LEN ){  // time message consists of header & 10 ASCII digits
-    char c = Serial.read() ; 
-    Serial.print(c);  
-    if( c == TIME_HEADER ) {       
-      time_t pctime = 0;
-      for(int i=0; i < TIME_MSG_LEN -1; i++){   
-        c = Serial.read();          
-        if( c >= '0' && c <= '9'){   
-          pctime = (10 * pctime) + (c - '0') ; // convert digits to a number    
-        }
-      }
-
-      Serial.println(pctime);
-      
-
-      sync_message = String(pctime);
-    }    
-  }
-} 
+void printTime(DateTime Time) {
+  char charBuf[25];
+  snprintf(charBuf, 25, "%s %s", time_string(Time), date_string(Time)); 
+  Serial.println(charBuf);
+  memset(charBuf, 0, 25);
+}
   
 long elapsed_time() {
   long current_time = millis();
@@ -87,42 +75,29 @@ long elapsed_time() {
   return diff_time;
 }
   
-String time(RTC_DS1307 RTC) {
-    DateTime now = RTC.now();
-    String string = "";
-    string += charToString(now.hour());
-    string += ':';
-    string += charToString(now.minute());
-    string += ':';
-    string += charToString(now.second());
-    return string;
+char * time_string(DateTime time) {
+   int hour = time.hour(); 
+   char meridiem[] = "AM";
+   if(hour > 12) {
+      sprintf(meridiem, "%s", "PM");
+      hour -= 12;
+    }
+   
+    static char sendBuffer[12];
+    snprintf(sendBuffer, 12, "%02d:%02d:%02d %s", hour, time.minute(), time.second(), meridiem); 
+    return sendBuffer;
 }
 
-String date(RTC_DS1307 RTC) {
-    DateTime now = RTC.now();
-    String string = "";
-    string += now.year();
-    string += '/';
-    string += now.month();
-    string += '/';
-    string += now.day();
-    return string;
+char * date_string(DateTime time) {
+    static char sendBuffer[11];
+    snprintf(sendBuffer, 11, "%02d-%02d-%04d", time.month(), time.day(), time.year()); 
+    return sendBuffer;
 }
 
-String charToString(int integer) {
-    char str[2];
-    sprintf(str, "%02d", integer);
-    String randomString(str);
-    return randomString;
-}
+void drawString(char* text, int x, int y) {
 
-void drawString(String text, int x, int y) {
-  int str_len = text.length() + 1; 
-  char char_array[str_len];
-  text.toCharArray(char_array, str_len);
   // graphic commands to redraw the complete screen should be placed here  
   u8g.setFont(u8g_font_unifont);
   //u8g.setFont(u8g_font_osb21);
-  u8g.drawStr( x, y, char_array);
+  u8g.drawStr( x, y, text);
 }
-
